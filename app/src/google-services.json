@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "256983454693",
+    "project_id": "upra-b6879",
+    "storage_bucket": "upra-b6879.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:256983454693:android:73e13441ffdc523baa950c",
+        "android_client_info": {
+          "package_name": "com.wan.a2upra"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyChYeEAKVD6IJQ-YzwgTltFHl2vkFx2a_E"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
