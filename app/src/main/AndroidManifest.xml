@@ -6,7 +6,7 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
-
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
     <application
         android:requestLegacyExternalStorage="true"
@@ -30,7 +30,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <receiver android:name=".NotificationActionReceiver" />
+        <receiver android:name=".MainActivity$NotificationActionReceiver" />
         <service
             android:name=".MyFirebaseMessagingService"
             android:exported="true">
