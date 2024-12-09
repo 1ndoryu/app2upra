@@ -555,7 +555,7 @@ class MainActivity : ComponentActivity() {
         val notification = NotificationCompat.Builder(this, channelId)
             .setContentTitle(title)
             .setContentText(author)
-            .setSmallIcon(R.drawable.ic_music_note)
+            .setSmallIcon(R.drawable.blanco)
             .setLargeIcon(largeIcon)
             .addAction(playPauseAction)
             .setStyle(
@@ -714,7 +714,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val notification = NotificationCompat.Builder(this, channelId)
             .setContentTitle(title)
             .setContentText(body)
-            .setSmallIcon(R.mipmap.a2upra)
+            .setSmallIcon(R.drawable.blanco)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .build()
