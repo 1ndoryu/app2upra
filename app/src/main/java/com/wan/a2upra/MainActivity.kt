@@ -1,6 +1,5 @@
 package com.wan.a2upra
 
-import android.annotation.SuppressLint
 import android.app.DownloadManager
 import android.os.Bundle
 import android.webkit.WebView
@@ -8,15 +7,10 @@ import android.webkit.WebViewClient
 import android.webkit.CookieManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.google.firebase.messaging.FirebaseMessaging
-import com.wan.a2upra.ui.theme._2upraTheme
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import android.util.Log
@@ -24,38 +18,45 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import androidx.core.app.NotificationCompat
 import com.android.volley.toolbox.Volley
-import com.google.firebase.FirebaseApp
 import org.json.JSONObject
 import com.android.volley.toolbox.JsonObjectRequest
 import android.app.PendingIntent
-import android.content.BroadcastReceiver
 import android.content.Intent
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.webkit.JavascriptInterface
-import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
-import androidx.activity.result.contract.ActivityResultContracts
-import com.bumptech.glide.Glide
 import android.os.Build
 import android.os.Environment
 import android.webkit.URLUtil
 import android.widget.Toast
-import androidx.core.content.ContextCompat
-import android.Manifest
-import android.content.IntentFilter
 import android.content.pm.ActivityInfo
-import android.graphics.Color
-import android.support.v4.media.session.MediaSessionCompat
-import android.support.v4.media.session.PlaybackStateCompat
+
 import android.view.MotionEvent
-import android.view.View
-import android.content.pm.PackageInfo
 import android.view.WindowManager
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
 import com.android.volley.RequestQueue
+import kotlinx.coroutines.delay
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.*
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
+
+import android.graphics.Color as AndroidColor
+import androidx.compose.ui.graphics.Color as ComposeColor
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+
 
 /////////////////////////////////////////
 class MainActivity : ComponentActivity() {
@@ -64,13 +65,17 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        window.setBackgroundDrawableResource(android.R.color.black) // Fondo negro
+        window.statusBarColor = AndroidColor.parseColor("#050505")
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
 
         gestorDescargas = GestorDescargas(this)
         setContent {
             PantallaWebView(gestorDescargas, { vistaWeb = it }) {
-                window.statusBarColor = Color.parseColor("#050505")
+                //aca causa conflicto
+                window.statusBarColor = AndroidColor.parseColor("#050505")
             }
         }
     }
@@ -83,38 +88,41 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
-
+///////////////////////////////////////////////////
 @Composable
-fun PantallaWebView(
-    gestorDescargas: GestorDescargas,
-    setVistaWeb: (WebView) -> Unit,
-    configurarStatusBar: () -> Unit
-) {
+fun PantallaWebView(gestorDescargas: GestorDescargas, setVistaWeb: (WebView) -> Unit, configurarStatusBar: () -> Unit) {
     val contexto = LocalContext.current
-    val userHelper = UserHelper(contexto)
-    val configuradorWebView = ConfiguradorWebView(gestorDescargas, userHelper)
+    val configuradorWebView = ConfiguradorWebView(gestorDescargas, UserHelper(contexto))
     var vistaWeb by remember { mutableStateOf<WebView?>(null) }
+    var mostrarLogo by remember { mutableStateOf(true) }
 
-    val nuevaVistaWeb = remember(contexto) {
-        WebView(contexto).apply {
-            configuradorWebView.configurar(this)
-            configurarStatusBar()
-            setVistaWeb(this)
+    if (mostrarLogo) {
+        MostrarLogo()
+    }
+
+    LaunchedEffect(Unit) {
+        delay(100)
+        mostrarLogo = false
+    }
+
+    if (!mostrarLogo) {
+        val nuevaVistaWeb = remember(contexto) {
+            WebView(contexto).apply {
+                configuradorWebView.configurar(this)
+                setBackgroundColor(AndroidColor.parseColor("#050505"))
+                configurarStatusBar()
+                setVistaWeb(this)
+            }
+        }
+        vistaWeb = nuevaVistaWeb
+
+        VistaWebConDeslizarParaRefrescar(nuevaVistaWeb) {
+            vistaWeb = it
         }
     }
-    vistaWeb = nuevaVistaWeb
-
-    VistaWebConDeslizarParaRefrescar(nuevaVistaWeb) {
-        vistaWeb = it
-    }
 }
-///////////////////////////////////////////////////
 
-
-class ConfiguradorWebView(
-    private val gestorDescargas: GestorDescargas,
-    private val userHelper: UserHelper
-) {
+class ConfiguradorWebView(private val gestorDescargas: GestorDescargas, private val userHelper: UserHelper) {
     private val tag = "panjamon"
 
     fun configurar(vistaWeb: WebView) {
@@ -163,15 +171,12 @@ class ConfiguradorWebView(
             request: WebResourceRequest
         ): Boolean {
             val url = request.url.toString()
-            Log.d(tag, "URL cargando: $url")
             val permitida = esUrlPermitida(url)
-            Log.d(tag, "URL permitida: $permitida")
             return !permitida
         }
 
         override fun onPageFinished(view: WebView?, url: String?) {
             super.onPageFinished(view, url)
-            Log.d(tag, "Página finalizada: $url")
             inyectarJavascript(view)
             (view?.parent as? SwipeRefreshLayout)?.isRefreshing = false
         }
@@ -195,13 +200,11 @@ class ConfiguradorWebView(
                 "}" +
                 "})();"
         vistaWeb?.evaluateJavascript(script) { resultado ->
-            Log.d(tag, "Resultado de inyectarJavascript: $resultado")
             if (resultado != null && resultado != "null") {
                 val userId = resultado.replace("\"", "")
-                Log.d(tag, "userId obtenido: $userId")
                 manejarUserId(userId)
             } else {
-                Log.d(tag, "userId no encontrado en la página")
+                //Log.d(tag, "userId no encontrado en la página")
             }
         }
     }
@@ -223,6 +226,23 @@ class ConfiguradorWebView(
 
     private inline fun conCookieManager(bloque: CookieManager.() -> Unit) {
         CookieManager.getInstance().apply(bloque)
+    }
+}
+
+@Composable
+fun MostrarLogo() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            //y aca obviamente falla si no elijo import androidx.compose.ui.graphics.Color
+            .background(ComposeColor(0xFF050505)),
+        contentAlignment = Alignment.Center
+    ) {
+        Image(
+            painter = painterResource(id = R.drawable.blanco),
+            contentDescription = "Logo",
+            modifier = Modifier.size(60.dp)
+        )
     }
 }
 
@@ -293,13 +313,13 @@ class UserHelper(private val context: Context) {
         return object : JsonObjectRequest(
             Method.POST, url, json,
             { response ->
-                Log.d("UserHelper", "Token enviado con éxito: $response")
+                //Log.d("UserHelper", "Token enviado con éxito: $response")
             },
             { error ->
-                Log.e("UserHelper", "Error enviando el token: ${error.message}")
+                //Log.e("UserHelper", "Error enviando el token: ${error.message}")
                 error.networkResponse?.let {
-                    Log.e("UserHelper", "Código de estado HTTP: ${it.statusCode}")
-                    Log.e("UserHelper", "Datos de la respuesta: ${String(it.data)}")
+                    //Log.e("UserHelper", "Código de estado HTTP: ${it.statusCode}")
+                    //Log.e("UserHelper", "Datos de la respuesta: ${String(it.data)}")
                 }
             }
         ) {
@@ -430,17 +450,8 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
     }
 }
 
-//Auxiliares
 @Composable
-fun ContenedorWebView(vistaWeb: WebView) {
-    AndroidView(factory = { vistaWeb })
-}
-
-@Composable
-fun VistaWebConDeslizarParaRefrescar(
-    vistaWeb: WebView,
-    actualizarVistaWeb: (WebView) -> Unit
-) {
+fun VistaWebConDeslizarParaRefrescar(vistaWeb: WebView, actualizarVistaWeb: (WebView) -> Unit) {
     var refrescando by remember { mutableStateOf(false) }
     var inhabilitarDeslizarRefrescar by remember { mutableStateOf(false) }
     var inicioY by remember { mutableStateOf(0f) }
