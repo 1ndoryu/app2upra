@@ -35,7 +35,7 @@ import android.widget.Toast
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.support.v4.media.session.MediaSessionCompat
-
+import android.Manifest
 import android.view.MotionEvent
 import android.view.WindowManager
 import androidx.compose.foundation.Image
@@ -45,6 +45,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.android.volley.RequestQueue
 import kotlinx.coroutines.delay
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
@@ -55,6 +56,9 @@ import androidx.compose.ui.Alignment
 import com.bumptech.glide.Glide
 import android.webkit.JavascriptInterface
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import android.content.IntentFilter
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.core.content.ContextCompat
 
 
 /////////////////////////////////////////
@@ -62,25 +66,86 @@ class MainActivity : ComponentActivity() {
     private lateinit var gestorDescargas: GestorDescargas
     private var vistaWeb: WebView? = null
     private lateinit var audioPlayer: AudioPlayer
-    lateinit var mediaSession: MediaSessionCompat
+    private var permisosConcedidos = false
+    private lateinit var mediaSession: MediaSessionCompat
+
+    private val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        permisosConcedidos = isGranted
+        if (isGranted) {
+            inicializarAudioPlayer()
+            Toast.makeText(this, "Permiso para notificaciones concedido", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this, "Permiso para notificaciones denegado", Toast.LENGTH_SHORT).show()
+        }
+        // Forzar la recomposición después de manejar los permisos
+        setContent {
+            PantallaPrincipal()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         mediaSession = MediaSessionCompat(this, "AudioPlayer")
-        audioPlayer = AudioPlayer(this)
-        window.setBackgroundDrawableResource(android.R.color.black) // Fondo negro
-        window.statusBarColor = AndroidColor.parseColor("#050505")
-        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
-
+        audioPlayer = AudioPlayer(this, mediaSession)
+        inicializarApariencia()
+        permisosNotificacion()
         gestorDescargas = GestorDescargas(this)
         setContent {
+            PantallaPrincipal()
+        }
+    }
+
+    @Composable
+    private fun PantallaPrincipal() {
+        if (permisosConcedidos) {
             PantallaWebView(
                 gestorDescargas,
                 { vistaWeb = it },
                 { window.statusBarColor = AndroidColor.parseColor("#050505") },
-                audioPlayer
+                audioPlayer  // Usar '!!' solo si estás seguro de que no es null
             )
+        } else {
+            // Muestra una pantalla de carga o un indicador hasta que se manejen los permisos
+            CircularProgressIndicator()
+        }
+    }
+
+    private fun inicializarAudioPlayer() {
+        if (audioPlayer == null) {
+            audioPlayer = AudioPlayer(this, mediaSession)
+        }
+    }
+
+    private fun inicializarApariencia() {
+        window.setBackgroundDrawableResource(android.R.color.black)
+        window.statusBarColor = AndroidColor.parseColor("#050505")
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+    }
+
+    private fun permisosNotificacion() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                permisosConcedidos = true
+                inicializarAudioPlayer()
+            } else if (shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)) {
+                Toast.makeText(
+                    this,
+                    "Necesitamos permiso para mostrar notificaciones de reproducción",
+                    Toast.LENGTH_SHORT
+                ).show()
+                requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        } else {
+            // Para versiones anteriores a Android 13, no se necesitan permisos especiales
+            permisosConcedidos = true
+            inicializarAudioPlayer()
         }
     }
 
@@ -91,29 +156,10 @@ class MainActivity : ComponentActivity() {
             super.onBackPressed()
         }
     }
-
-    fun showAudioNotification(
-        title: String,
-        author: String,
-        imageUrl: String,
-        audioSrc: String,
-        mediaSession: MediaSessionCompat
-    ) {
-        audioPlayer.showAudioNotification(title, author, imageUrl, audioSrc, mediaSession)
-    }
-
-    fun updateNotificationPlaybackState(state: String, mediaSession: MediaSessionCompat) {
-        audioPlayer.updateNotificationPlaybackState(state, mediaSession)
-    }
 }
 
 @Composable
-fun PantallaWebView(
-    gestorDescargas: GestorDescargas,
-    setVistaWeb: (WebView) -> Unit,
-    configurarStatusBar: () -> Unit,
-    audioPlayer: AudioPlayer
-) {
+fun PantallaWebView(gestorDescargas: GestorDescargas, setVistaWeb: (WebView) -> Unit, configurarStatusBar: () -> Unit, audioPlayer: AudioPlayer) {
     val contexto = LocalContext.current
     val configuradorWebView =
         ConfiguradorWebView(gestorDescargas, UserHelper(contexto), audioPlayer, contexto)
@@ -137,7 +183,7 @@ fun PantallaWebView(
                 configurarStatusBar()
                 setVistaWeb(this)
                 addJavascriptInterface(
-                    AudioPlayerInterface(contexto),
+                    AudioPlayerInterface(audioPlayer),
                     "AndroidAudioPlayer"
                 )
             }
@@ -150,12 +196,7 @@ fun PantallaWebView(
     }
 }
 
-class ConfiguradorWebView(
-    private val gestorDescargas: GestorDescargas,
-    private val userHelper: UserHelper,
-    private val audioPlayer: AudioPlayer,
-    private val context: Context
-) {
+class ConfiguradorWebView(private val gestorDescargas: GestorDescargas, private val userHelper: UserHelper, private val audioPlayer: AudioPlayer, private val context: Context) {
     private val tag = "panjamon"
 
     fun configurar(vistaWeb: WebView) {
@@ -163,7 +204,10 @@ class ConfiguradorWebView(
         configurarClientes(vistaWeb)
         configurarListenerDescargas(vistaWeb)
         vistaWeb.loadUrl("https://2upra.com")
-        vistaWeb.addJavascriptInterface(AudioPlayerInterface(context), "AndroidAudioPlayer")
+        vistaWeb.addJavascriptInterface(
+            AudioPlayerInterface(audioPlayer),
+            "AndroidAudioPlayer"
+        )
     }
 
     private fun configurarAjustes(vistaWeb: WebView) {
@@ -242,13 +286,10 @@ class ConfiguradorWebView(
 
     private fun manejarUserId(userId: String) {
         userHelper.guardarUserId(userId)
-        //Log.d(tag, "userId guardado en userHelper")
         FirebaseMessaging.getInstance().token.addOnCompleteListener { tarea ->
             if (tarea.isSuccessful) {
                 val token = tarea.result
-                //Log.d(tag, "Token de Firebase obtenido: $token")
                 userHelper.enviarToken(token, userId)
-                //Log.d(tag, "Token y userId enviados con userHelper")
             } else {
                 Log.e(tag, "Error al obtener el token de Firebase", tarea.exception)
             }
@@ -260,88 +301,86 @@ class ConfiguradorWebView(
     }
 }
 
-class AudioPlayer(private val context: Context) {
-    private val notificationId = 1
-    private var playbackState = "stopped"
-
-    private fun getPendingIntentForAction(action: String): PendingIntent {
-        val intent = Intent(context, AudioNotificationReceiver::class.java).apply {
-            this.action = action // Ahora 'action' es accesible
-        }
-        return PendingIntent.getBroadcast(
-            context,
-            0,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+class AudioPlayer(private val context: Context, private val mediaSession: MediaSessionCompat) {
+    companion object {
+        private const val NOTIFICATION_ID = 1
+        private const val CHANNEL_ID = "audio_playback_channel"
     }
 
-    fun showAudioNotification(
-        title: String,
-        author: String,
-        imageUrl: String,
-        audioSrc: String,
-        mediaSession: MediaSessionCompat
-    ) {
-        Log.d(
-            "panjamon",
-            "showAudioNotification: Mostrando notificación - Título: $title, Autor: $author, Estado: $playbackState, audioSrc: $audioSrc"
+    private var playbackState = "stopped"
+    private var currentTitle = ""
+    private var currentAuthor = ""
+    private var currentImageUrl = ""
+    private var currentAudioSrc = ""
+
+    private val notificationManager =
+        context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+    init {
+        crearCanalNotificacion()
+    }
+
+    private fun crearCanalNotificacion() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            notificationManager.createNotificationChannel(
+                NotificationChannel(
+                    CHANNEL_ID,
+                    "Reproducción de audio",
+                    NotificationManager.IMPORTANCE_HIGH
+                )
+            )
+        }
+    }
+
+    private fun obtenerPendingIntent(): PendingIntent =
+        PendingIntent.getBroadcast(
+            context,
+            0,
+            Intent(context, AudioNotificationReceiver::class.java).apply {
+                action = "TOGGLE_PLAY_PAUSE"
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notificationManager =
-            context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val channelId = "audio_playback_channel"
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId, "Reproducción de audio",
-                NotificationManager.IMPORTANCE_HIGH
-            )
-            notificationManager.createNotificationChannel(channel)
-        }
+    fun mostrarNotificacion() {
+        notificationManager.notify(NOTIFICATION_ID, crearNotificacion())
+    }
 
-        val playPauseAction = NotificationCompat.Action.Builder(
-            if (playbackState == "playing") R.drawable.ic_pause else R.drawable.ic_play,
-            if (playbackState == "playing") "Pausar" else "Reproducir",
-            getPendingIntentForAction("TOGGLE_PLAY_PAUSE")
-        ).build()
-
-        val largeIcon = obtenerBitmapDeUrl(imageUrl)
-
-        val notification = NotificationCompat.Builder(context, channelId)
-            .setContentTitle(title)
-            .setContentText(author)
+    private fun crearNotificacion() =
+        NotificationCompat.Builder(context, CHANNEL_ID)
+            .setContentTitle(currentTitle)
+            .setContentText(currentAuthor)
             .setSmallIcon(R.drawable.blanco)
-            .setLargeIcon(largeIcon)
-            .addAction(playPauseAction)
-            .setStyle(
-                androidx.media.app.NotificationCompat.MediaStyle()
-                    .setShowActionsInCompactView(0)
-                    .setMediaSession(mediaSession.sessionToken)
-            )
+            .setLargeIcon(obtenerBitmapDeUrl(currentImageUrl))
+            .addAction(crearAccionReproduccion())
+            .setStyle(crearEstiloMultimedia())
             .setOngoing(playbackState == "playing")
             .build()
 
-        notificationManager.notify(notificationId, notification)
-    }
+    private fun crearAccionReproduccion() =
+        NotificationCompat.Action.Builder(
+            if (playbackState == "playing") R.drawable.ic_pause else R.drawable.ic_play,
+            if (playbackState == "playing") "Pausar" else "Reproducir",
+            obtenerPendingIntent()
+        ).build()
 
-    fun updateNotificationPlaybackState(state: String, mediaSession: MediaSessionCompat) {
-        Log.d("panjamon", "updateNotificationPlaybackState: Actualizando estado a: $state")
+    private fun crearEstiloMultimedia() =
+        androidx.media.app.NotificationCompat.MediaStyle()
+            .setShowActionsInCompactView(0)
+            .setMediaSession(mediaSession.sessionToken)
+
+    fun actualizarEstadoReproduccion(state: String) {
         playbackState = state
-        Log.d(
-            "panjamon",
-            "updateNotificationPlaybackState: playbackState actualizado a: $playbackState"
-        )
-        showAudioNotification(
-            "Reproduciendo ahora",
-            "Artista",
-            "",
-            "",
-            mediaSession
-        )
+        mostrarNotificacion()
     }
 
-    private fun obtenerBitmapDeUrl(imageUrl: String): Bitmap? {
-        return if (imageUrl.isNotEmpty()) {
+    fun togglePlayPause() {
+        playbackState = if (playbackState == "playing") "paused" else "playing"
+        actualizarEstadoReproduccion(playbackState)
+    }
+
+    private fun obtenerBitmapDeUrl(imageUrl: String): Bitmap? =
+        if (imageUrl.isNotEmpty()) {
             try {
                 Glide.with(context)
                     .asBitmap()
@@ -356,54 +395,48 @@ class AudioPlayer(private val context: Context) {
         } else {
             null
         }
+
+    fun actualizarInfoAudio(
+        title: String,
+        author: String,
+        imageUrl: String,
+        audioSrc: String
+    ) {
+        currentTitle = title
+        currentAuthor = author
+        currentImageUrl = imageUrl
+        currentAudioSrc = audioSrc
     }
 }
 
-class AudioNotificationReceiver : BroadcastReceiver() {
+class AudioNotificationReceiver(private val audioPlayer: AudioPlayer? = null) : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        Log.d("panjamon", "AudioNotificationReceiver.onReceive: Acción recibida: ${intent.action}")
+        if (audioPlayer == null) {
+            Log.e("panjamon", "AudioPlayer is null in AudioNotificationReceiver")
+            return
+        }
+
         when (intent.action) {
-            "TOGGLE_PLAY_PAUSE" -> {
-                Log.d("panjamon", "AudioNotificationReceiver.onReceive: Acción TOGGLE_PLAY_PAUSE")
-                // Enviar un broadcast local
-                val localIntent = Intent("TOGGLE_PLAY_PAUSE_ACTION")
-                LocalBroadcastManager.getInstance(context).sendBroadcast(localIntent)
-            }
+            "TOGGLE_PLAY_PAUSE" -> audioPlayer.togglePlayPause()
         }
     }
 }
 
-class AudioPlayerInterface(private val context: Context) {
+class AudioPlayerInterface(private val audioPlayer: AudioPlayer) {
     @JavascriptInterface
     fun sendAudioInfo(title: String, author: String, imageUrl: String, audioSrc: String) {
-        Log.d(
-            "panjamon",
-            "AudioPlayerInterface.sendAudioInfo: Título: $title, Autor: $author, Imagen: $imageUrl, AudioSrc: $audioSrc"
-        )
-        (context as MainActivity).showAudioNotification(
-            title,
-            author,
-            imageUrl,
-            audioSrc,
-            (context as MainActivity).mediaSession
-        )
+        audioPlayer.actualizarInfoAudio(title, author, imageUrl, audioSrc)
+        audioPlayer.mostrarNotificacion()
     }
 
     @JavascriptInterface
     fun updateNotificationPlaybackState(state: String) {
-        Log.d(
-            "panjamon",
-            "AudioPlayerInterface.updateNotificationPlaybackState: Estado recibido de WebView: $state"
-        )
-        (context as MainActivity).updateNotificationPlaybackState(
-            state,
-            (context as MainActivity).mediaSession
-        )
+        audioPlayer.actualizarEstadoReproduccion(state)
     }
 
     @JavascriptInterface
     fun log(message: String) {
-        Log.d("panjamon", "AudioPlayerInterface: $message")
+        Log.d("panjamon", message)
     }
 }
 
