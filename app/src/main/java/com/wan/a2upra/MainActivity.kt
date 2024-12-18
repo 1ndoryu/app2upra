@@ -108,101 +108,7 @@ fun PantallaWebView(
     }
 }
 
-@Composable
-fun VistaWebConDeslizarParaRefrescar(
-    vistaWeb: WebView,
-    actualizarVistaWeb: (WebView) -> Unit
-) {
-    var refrescando by remember { mutableStateOf(false) }
-    var inhabilitarDeslizarRefrescar by remember { mutableStateOf(false) }
-    var inicioY by remember { mutableStateOf(0f) }
-    var inicioX by remember { mutableStateOf(0f) }
-    var desplazando by remember { mutableStateOf(false) }
-
-    AndroidView(factory = { contexto ->
-        SwipeRefreshLayout(contexto).apply {
-            setOnRefreshListener {
-                vistaWeb.reload()
-                refrescando = true
-            }
-
-            vistaWeb.setOnTouchListener { vista, evento ->
-                when (evento.action) {
-                    MotionEvent.ACTION_DOWN -> {
-                        inicioY = evento.y
-                        inicioX = evento.x
-                        desplazando = false
-                        vistaWeb.evaluateJavascript(
-                            "(function() { " +
-                                    "  var element = document.elementFromPoint(${inicioX.toInt()}, ${inicioY.toInt()});" +
-                                    "  if (element) {" +
-                                    "    while (element !== null) {" +
-                                    "      if (element.classList.contains('no-refresh')) {" +
-                                    "        return true;" +
-                                    "      }" +
-                                    "      element = element.parentElement;" +
-                                    "    }" +
-                                    "  }" +
-                                    "  return false;" +
-                                    "})();"
-                        ) { resultado ->
-                            inhabilitarDeslizarRefrescar = resultado == "true"
-                        }
-                        vista.parent.requestDisallowInterceptTouchEvent(false)
-                    }
-
-                    MotionEvent.ACTION_MOVE -> {
-                        val diferenciaY = evento.y - inicioY
-                        val diferenciaX = evento.x - inicioX
-
-                        if (kotlin.math.abs(diferenciaY) > kotlin.math.abs(diferenciaX)) {
-                            if (!desplazando) {
-                                desplazando = true
-
-                                if (diferenciaY > 0 && inhabilitarDeslizarRefrescar) {
-                                    this.isEnabled = false
-                                    vista.parent.requestDisallowInterceptTouchEvent(true)
-                                } else {
-                                    this.isEnabled = true
-                                    vista.parent.requestDisallowInterceptTouchEvent(false)
-                                }
-                            } else if (inhabilitarDeslizarRefrescar) {
-                                if (diferenciaY > 0) {
-                                    vista.parent.requestDisallowInterceptTouchEvent(true)
-                                } else {
-                                    vista.parent.requestDisallowInterceptTouchEvent(false)
-                                }
-                            }
-                        } else {
-                            desplazando = true
-                            vista.parent.requestDisallowInterceptTouchEvent(false)
-                        }
-                    }
-
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                        this.isEnabled = true
-                        inhabilitarDeslizarRefrescar = false
-                        desplazando = false
-                        vista.parent.requestDisallowInterceptTouchEvent(false)
-                    }
-                }
-                false
-            }
-            addView(vistaWeb)
-            actualizarVistaWeb(vistaWeb)
-        }
-    }, update = {
-        it.isRefreshing = refrescando
-    })
-}
-
-
-@Composable
-fun ContenedorWebView(vistaWeb: WebView) {
-    AndroidView(factory = { vistaWeb })
-}
 /////////////////////////////////////////
-
 class ConfiguradorWebView(private val gestorDescargas: GestorDescargas) {
     fun configurar(vistaWeb: WebView) {
         configurarAjustes(vistaWeb)
@@ -241,10 +147,12 @@ class ConfiguradorWebView(private val gestorDescargas: GestorDescargas) {
                 request: WebResourceRequest
             ): Boolean {
                 val url = request.url.toString()
-                if (!esUrlPermitida(url)) {
-                    return true
-                }
-                return false
+                return !esUrlPermitida(url)
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                (view?.parent as? SwipeRefreshLayout)?.isRefreshing = false
             }
         }
     }
@@ -261,122 +169,7 @@ class ConfiguradorWebView(private val gestorDescargas: GestorDescargas) {
     }
 }
 
-class UserHelper(private val context: Context) {
 
-    fun sendTokenToWordPress(token: String?, userId: String) {
-        val url = "https://2upra.com/wp-json/custom/v1/save-token"
-        val requestQueue = Volley.newRequestQueue(context)
-
-        Log.d("panjamon", "sendTokenToWordPress: Iniciando envío de token")
-
-        // Obtenemos la versión actual de la app
-        val appVersionName = getAppVersionName()
-        val appVersionCode = getAppVersionCode()
-
-        Log.d("panjamon", "sendTokenToWordPress: appVersionName = $appVersionName")
-        Log.d("panjamon", "sendTokenToWordPress: appVersionCode = $appVersionCode")
-
-        // Creamos el JSON que se enviará al servidor
-        val jsonObject = JSONObject().apply {
-            put("token", token ?: "") // Enviar cadena vacía si el token es nulo
-            put("userId", userId)
-            put("appVersionName", appVersionName)
-            put("appVersionCode", appVersionCode)
-        }
-
-        Log.d("panjamon", "sendTokenToWordPress: JSON a enviar = $jsonObject")
-
-        val jsonObjectRequest = object : JsonObjectRequest(
-            Method.POST, url, jsonObject,
-            { response ->
-                // Manejar respuesta exitosa del servidor (opcional)
-                Log.d("panjamon", "sendTokenToWordPress: Respuesta exitosa del servidor: $response")
-                Log.d("UserHelper", "Token enviado con éxito: $response")
-            },
-            { error ->
-                // Manejar error de la solicitud
-                Log.e("panjamon", "sendTokenToWordPress: Error en la solicitud: ${error.message}")
-                Log.e("UserHelper", "Error enviando el token: ${error.message}")
-
-                // Detalles adicionales del error
-                error.networkResponse?.let {
-                    Log.e(
-                        "panjamon",
-                        "sendTokenToWordPress: Código de estado HTTP: ${it.statusCode}"
-                    )
-                    Log.e(
-                        "panjamon",
-                        "sendTokenToWordPress: Datos de la respuesta: ${String(it.data)}"
-                    )
-                }
-
-                if (error.cause != null) {
-                    Log.e("panjamon", "sendTokenToWordPress: Causa del error: ${error.cause}")
-                }
-            }
-        ) {
-            override fun getHeaders(): MutableMap<String, String> {
-                val headers = hashMapOf("Content-Type" to "application/json")
-                Log.d("panjamon", "sendTokenToWordPress: Headers = $headers")
-                return headers
-            }
-        }
-
-        requestQueue.add(jsonObjectRequest)
-        Log.d("panjamon", "sendTokenToWordPress: Solicitud agregada a la cola")
-    }
-
-    fun saveUserId(userId: String) {
-        Log.d("panjamon", "saveUserId: Guardando userId = $userId")
-        context.getSharedPreferences("UserPrefs", Context.MODE_PRIVATE).edit().apply {
-            putString("userId", userId)
-            apply()
-        }
-        Log.d("panjamon", "saveUserId: userId guardado correctamente")
-    }
-
-    // Función para obtener el nombre de la versión (ejemplo: "1.0.2")
-    private fun getAppVersionName(): String {
-        return try {
-            val packageInfo: PackageInfo =
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    context.packageManager.getPackageInfo(
-                        context.packageName,
-                        PackageManager.PackageInfoFlags.of(0)
-                    )
-                } else {
-                    context.packageManager.getPackageInfo(context.packageName, 0)
-                }
-            val versionName = packageInfo.versionName ?: "Unknown"
-            Log.d("panjamon", "getAppVersionName: versionName = $versionName")
-            versionName
-        } catch (e: Exception) {
-            Log.e("panjamon", "getAppVersionName: Error al obtener versionName: ${e.message}")
-            "Unknown"
-        }
-    }
-
-    // Función para obtener el código de la versión (ejemplo: 3)
-    private fun getAppVersionCode(): Int {
-        return try {
-            val packageInfo: PackageInfo =
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    context.packageManager.getPackageInfo(
-                        context.packageName,
-                        PackageManager.PackageInfoFlags.of(0)
-                    )
-                } else {
-                    context.packageManager.getPackageInfo(context.packageName, 0)
-                }
-            val versionCode = packageInfo.versionCode
-            Log.d("panjamon", "getAppVersionCode: versionCode = $versionCode")
-            versionCode
-        } catch (e: Exception) {
-            Log.e("panjamon", "getAppVersionCode: Error al obtener versionCode: ${e.message}")
-            -1 // Retornar -1 en caso de error
-        }
-    }
-}
 
 class GestorDescargas(private val contexto: Context) {
     fun manejarDescarga(
@@ -499,5 +292,98 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
 }
 
 //Auxiliares
+@Composable
+fun ContenedorWebView(vistaWeb: WebView) {
+    AndroidView(factory = { vistaWeb })
+}
+
+@Composable
+fun VistaWebConDeslizarParaRefrescar(
+    vistaWeb: WebView,
+    actualizarVistaWeb: (WebView) -> Unit
+) {
+    var refrescando by remember { mutableStateOf(false) }
+    var inhabilitarDeslizarRefrescar by remember { mutableStateOf(false) }
+    var inicioY by remember { mutableStateOf(0f) }
+    var inicioX by remember { mutableStateOf(0f) }
+    var desplazando by remember { mutableStateOf(false) }
+
+    AndroidView(factory = { contexto ->
+        SwipeRefreshLayout(contexto).apply {
+            setOnRefreshListener {
+                vistaWeb.reload()
+                refrescando = true
+            }
+
+            vistaWeb.setOnTouchListener { vista, evento ->
+                when (evento.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        inicioY = evento.y
+                        inicioX = evento.x
+                        desplazando = false
+                        vistaWeb.evaluateJavascript(
+                            "(function() { " +
+                                    "  var element = document.elementFromPoint(${inicioX.toInt()}, ${inicioY.toInt()});" +
+                                    "  if (element) {" +
+                                    "    while (element !== null) {" +
+                                    "      if (element.classList.contains('no-refresh')) {" +
+                                    "        return true;" +
+                                    "      }" +
+                                    "      element = element.parentElement;" +
+                                    "    }" +
+                                    "  }" +
+                                    "  return false;" +
+                                    "})();"
+                        ) { resultado ->
+                            inhabilitarDeslizarRefrescar = resultado == "true"
+                        }
+                        vista.parent.requestDisallowInterceptTouchEvent(false)
+                    }
+
+                    MotionEvent.ACTION_MOVE -> {
+                        val diferenciaY = evento.y - inicioY
+                        val diferenciaX = evento.x - inicioX
+
+                        if (kotlin.math.abs(diferenciaY) > kotlin.math.abs(diferenciaX)) {
+                            if (!desplazando) {
+                                desplazando = true
+
+                                if (diferenciaY > 0 && inhabilitarDeslizarRefrescar) {
+                                    this.isEnabled = false
+                                    vista.parent.requestDisallowInterceptTouchEvent(true)
+                                } else {
+                                    this.isEnabled = true
+                                    vista.parent.requestDisallowInterceptTouchEvent(false)
+                                }
+                            } else if (inhabilitarDeslizarRefrescar) {
+                                if (diferenciaY > 0) {
+                                    vista.parent.requestDisallowInterceptTouchEvent(true)
+                                } else {
+                                    vista.parent.requestDisallowInterceptTouchEvent(false)
+                                }
+                            }
+                        } else {
+                            desplazando = true
+                            vista.parent.requestDisallowInterceptTouchEvent(false)
+                        }
+                    }
+
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        this.isEnabled = true
+                        inhabilitarDeslizarRefrescar = false
+                        desplazando = false
+                        vista.parent.requestDisallowInterceptTouchEvent(false)
+                    }
+                }
+                false
+            }
+            addView(vistaWeb)
+            actualizarVistaWeb(vistaWeb)
+        }
+    }, update = {
+        it.isRefreshing = refrescando
+    })
+}
+
 
 
