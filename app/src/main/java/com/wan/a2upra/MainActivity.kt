@@ -55,6 +55,7 @@ import android.view.View
 import android.content.pm.PackageInfo
 import android.view.WindowManager
 import androidx.compose.ui.platform.LocalContext
+import com.android.volley.RequestQueue
 
 /////////////////////////////////////////
 class MainActivity : ComponentActivity() {
@@ -83,7 +84,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun PantallaWebView(
     gestorDescargas: GestorDescargas,
@@ -91,7 +91,8 @@ fun PantallaWebView(
     configurarStatusBar: () -> Unit
 ) {
     val contexto = LocalContext.current
-    val configuradorWebView = ConfiguradorWebView(gestorDescargas)
+    val userHelper = UserHelper(contexto)
+    val configuradorWebView = ConfiguradorWebView(gestorDescargas, userHelper)
     var vistaWeb by remember { mutableStateOf<WebView?>(null) }
 
     val nuevaVistaWeb = remember(contexto) {
@@ -107,22 +108,19 @@ fun PantallaWebView(
         vistaWeb = it
     }
 }
+///////////////////////////////////////////////////
 
-/////////////////////////////////////////
-class ConfiguradorWebView(private val gestorDescargas: GestorDescargas) {
+
+class ConfiguradorWebView(
+    private val gestorDescargas: GestorDescargas,
+    private val userHelper: UserHelper
+) {
+    private val tag = "panjamon"
+
     fun configurar(vistaWeb: WebView) {
         configurarAjustes(vistaWeb)
-        vistaWeb.webViewClient = crearWebViewClient()
-        vistaWeb.webChromeClient = WebChromeClient()
-        vistaWeb.setDownloadListener { url, userAgent, contentDisposition, mimetype, contentLength ->
-            gestorDescargas.manejarDescarga(
-                url,
-                userAgent,
-                contentDisposition,
-                mimetype,
-                contentLength
-            )
-        }
+        configurarClientes(vistaWeb)
+        configurarListenerDescargas(vistaWeb)
         vistaWeb.loadUrl("https://2upra.com")
     }
 
@@ -135,41 +133,182 @@ class ConfiguradorWebView(private val gestorDescargas: GestorDescargas) {
             setSupportMultipleWindows(true)
             userAgentString =
                 "Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Mobile Safari/537.36 AppAndroid"
-            CookieManager.getInstance().setAcceptCookie(true)
-            CookieManager.getInstance().setAcceptThirdPartyCookies(vistaWeb, true)
-        }
-    }
-
-    private fun crearWebViewClient(): WebViewClient {
-        return object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(
-                view: WebView,
-                request: WebResourceRequest
-            ): Boolean {
-                val url = request.url.toString()
-                return !esUrlPermitida(url)
-            }
-
-            override fun onPageFinished(view: WebView?, url: String?) {
-                super.onPageFinished(view, url)
-                (view?.parent as? SwipeRefreshLayout)?.isRefreshing = false
+            conCookieManager {
+                setAcceptCookie(true)
+                setAcceptThirdPartyCookies(vistaWeb, true)
             }
         }
     }
 
-    private fun esUrlPermitida(url: String): Boolean {
-        val dominiosPermitidos = listOf(
-            "accounts.google.com",
-            "google.com",
-            "2upra.com",
-            "checkout.stripe.com",
-            ".stripe.com"
-        )
-        return dominiosPermitidos.any { url.contains(it) }
+    private fun configurarClientes(vistaWeb: WebView) {
+        vistaWeb.webViewClient = crearWebViewClient()
+        vistaWeb.webChromeClient = WebChromeClient()
+    }
+
+    private fun configurarListenerDescargas(vistaWeb: WebView) {
+        vistaWeb.setDownloadListener { url, userAgent, contentDisposition, mimetype, contentLength ->
+            gestorDescargas.manejarDescarga(
+                url,
+                userAgent,
+                contentDisposition,
+                mimetype,
+                contentLength
+            )
+        }
+    }
+
+    private fun crearWebViewClient() = object : WebViewClient() {
+        override fun shouldOverrideUrlLoading(
+            view: WebView,
+            request: WebResourceRequest
+        ): Boolean {
+            val url = request.url.toString()
+            Log.d(tag, "URL cargando: $url")
+            val permitida = esUrlPermitida(url)
+            Log.d(tag, "URL permitida: $permitida")
+            return !permitida
+        }
+
+        override fun onPageFinished(view: WebView?, url: String?) {
+            super.onPageFinished(view, url)
+            Log.d(tag, "Página finalizada: $url")
+            inyectarJavascript(view)
+            (view?.parent as? SwipeRefreshLayout)?.isRefreshing = false
+        }
+    }
+
+    private fun esUrlPermitida(url: String) = listOf(
+        "accounts.google.com",
+        "google.com",
+        "2upra.com",
+        "checkout.stripe.com",
+        ".stripe.com"
+    ).any { url.contains(it) }
+
+    private fun inyectarJavascript(vistaWeb: WebView?) {
+        val script = "(function() { " +
+                "if (window.userId) { " +
+                "var idUsuario = window.userId; " +
+                "return idUsuario; " +
+                "} else { " +
+                "return null;" +
+                "}" +
+                "})();"
+        vistaWeb?.evaluateJavascript(script) { resultado ->
+            Log.d(tag, "Resultado de inyectarJavascript: $resultado")
+            if (resultado != null && resultado != "null") {
+                val userId = resultado.replace("\"", "")
+                Log.d(tag, "userId obtenido: $userId")
+                manejarUserId(userId)
+            } else {
+                Log.d(tag, "userId no encontrado en la página")
+            }
+        }
+    }
+
+    private fun manejarUserId(userId: String) {
+        userHelper.guardarUserId(userId)
+        Log.d(tag, "userId guardado en userHelper")
+        FirebaseMessaging.getInstance().token.addOnCompleteListener { tarea ->
+            if (tarea.isSuccessful) {
+                val token = tarea.result
+                Log.d(tag, "Token de Firebase obtenido: $token")
+                userHelper.enviarToken(token, userId)
+                Log.d(tag, "Token y userId enviados con userHelper")
+            } else {
+                Log.e(tag, "Error al obtener el token de Firebase", tarea.exception)
+            }
+        }
+    }
+
+    private inline fun conCookieManager(bloque: CookieManager.() -> Unit) {
+        CookieManager.getInstance().apply(bloque)
     }
 }
 
+class UserHelper(private val context: Context) {
 
+    fun enviarToken(token: String?, userId: String) {
+        val url = "https://2upra.com/wp-json/custom/v1/save-token"
+        val colaPeticiones = Volley.newRequestQueue(context)
+
+        val json = crearJSON(token, userId)
+        val peticion = crearPeticion(url, json, colaPeticiones)
+        colaPeticiones.add(peticion)
+    }
+
+    fun guardarUserId(userId: String) {
+        context.getSharedPreferences("UserPrefs", Context.MODE_PRIVATE).edit().apply {
+            putString("userId", userId)
+            apply()
+        }
+    }
+
+    private fun obtenerVersionNombre(): String {
+        return try {
+            val infoPaquete = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(
+                    context.packageName,
+                    PackageManager.PackageInfoFlags.of(0)
+                )
+            } else {
+                context.packageManager.getPackageInfo(context.packageName, 0)
+            }
+            infoPaquete.versionName ?: "Unknown"
+        } catch (e: Exception) {
+            "Unknown"
+        }
+    }
+
+    private fun obtenerVersionCodigo(): Int {
+        return try {
+            val infoPaquete = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(
+                    context.packageName,
+                    PackageManager.PackageInfoFlags.of(0)
+                )
+            } else {
+                context.packageManager.getPackageInfo(context.packageName, 0)
+            }
+            infoPaquete.versionCode
+        } catch (e: Exception) {
+            -1
+        }
+    }
+
+    private fun crearJSON(token: String?, userId: String): JSONObject {
+        return JSONObject().apply {
+            put("token", token ?: "")
+            put("userId", userId)
+            put("appVersionName", obtenerVersionNombre())
+            put("appVersionCode", obtenerVersionCodigo())
+        }
+    }
+
+    private fun crearPeticion(
+        url: String,
+        json: JSONObject,
+        colaPeticiones: RequestQueue
+    ): JsonObjectRequest {
+        return object : JsonObjectRequest(
+            Method.POST, url, json,
+            { response ->
+                Log.d("UserHelper", "Token enviado con éxito: $response")
+            },
+            { error ->
+                Log.e("UserHelper", "Error enviando el token: ${error.message}")
+                error.networkResponse?.let {
+                    Log.e("UserHelper", "Código de estado HTTP: ${it.statusCode}")
+                    Log.e("UserHelper", "Datos de la respuesta: ${String(it.data)}")
+                }
+            }
+        ) {
+            override fun getHeaders(): MutableMap<String, String> {
+                return mutableMapOf("Content-Type" to "application/json")
+            }
+        }
+    }
+}
 
 class GestorDescargas(private val contexto: Context) {
     fun manejarDescarga(
