@@ -88,6 +88,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
 ///////////////////////////////////////////////////
 @Composable
 fun PantallaWebView(gestorDescargas: GestorDescargas, setVistaWeb: (WebView) -> Unit, configurarStatusBar: () -> Unit) {
